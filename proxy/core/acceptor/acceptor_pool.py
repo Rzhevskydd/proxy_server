@@ -30,11 +30,11 @@ class AcceptorPool:
         print(f'Listening on {self.flags.hostname} : {self.flags.port}')
 
     def start_workers(self):
-        # if self.flags.num_workers == 1:
-        #     while True:
-        #         client_conn, client_addr = self.socket.accept()
-        #         handler = self.handler_class(client_conn, client_addr, self.flags)
-        #         handler.run()
+        if self.flags.num_workers == 1:
+            while True:
+                client_conn, client_addr = self.socket.accept()
+                handler = self.handler_class(client_conn, client_addr, self.flags)
+                handler.run()
 
         for acceptor_id in range(self.flags.num_workers):
             work_queue = Pipe()
@@ -55,9 +55,9 @@ class AcceptorPool:
         self.start_workers()
 
         assert self.socket is not None
-        # if self.flags.num_workers == 1:
-        #     self.socket.close()
-        #     return
+        if self.flags.num_workers == 1:
+            self.socket.close()
+            return
         for idx in range(self.flags.num_workers):
             send_handle(
                 self.work_queues[idx],

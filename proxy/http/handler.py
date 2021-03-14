@@ -1,4 +1,7 @@
+import os
+import pprint
 import socket
+import ssl
 import time
 from os import getpid
 from typing import Optional, Union
@@ -6,14 +9,22 @@ from urllib import parse as urlparse
 
 from http_parser.parser import HttpParser
 
-from proxy.common.constant import DEFAULT_HTTP_PORT, DEFAULT_TIMEOUT, PROXY_AGENT_HEADER_VALUE
+from proxy.cert_utils import generate_cert
+from proxy.common.constant import DEFAULT_HTTP_PORT, DEFAULT_TIMEOUT, PROXY_AGENT_HEADER_VALUE, PRIVATE_KEY_PATH, \
+    ROOT_CRTNAME, CERTS_MAIN_DIRNAME
 from proxy.http.http_methods import httpMethods
-from proxy.http.utils import build_http_request, recv_and_parse
+from proxy.http.utils import build_http_request, recv_and_parse, build_http_response
 
 DEFAULT_BUFF_SIZE = 4096
 
 
 class HttpProtocolHandler:
+
+    PROXY_TUNNEL_ESTABLISHED_RESPONSE_PKT = build_http_response(
+        200,
+        reason=b'Connection established'
+    )
+
     def __init__(self,
                  client_conn: socket.socket,
                  client_addr,
@@ -35,7 +46,7 @@ class HttpProtocolHandler:
 
     def run(self) -> None:
         try:
-            self.initialize()
+            # self.initialize()
 
             client_data = recv_and_parse(self.client, self.request_parser, buff_size=DEFAULT_BUFF_SIZE)
             if len(client_data) == 0:
@@ -45,7 +56,75 @@ class HttpProtocolHandler:
             self.connect_upstream()
 
             if self.request_parser.get_method() == httpMethods.CONNECT:
-                pass
+                print(str(HttpProtocolHandler.PROXY_TUNNEL_ESTABLISHED_RESPONSE_PKT))
+                self.client.sendall(HttpProtocolHandler.PROXY_TUNNEL_ESTABLISHED_RESPONSE_PKT)
+
+                # Generate for each socket individual cert on fly
+                cert_path = generate_cert(self.upstream_url.hostname)
+                # TODO
+                time.sleep(1)
+
+                try:
+                    # ctx = ssl.create_default_context()
+                    # ctx.options |= ssl.OP_NO_SSLv2 | ssl.OP_NO_SSLv3 | ssl.OP_NO_TLSv1
+                    # ctx.load_cert_chain(certfile=cert_path, keyfile=PRIVATE_KEY_PATH)
+                    # self.server = ctx.wrap_socket(self.server, server_hostname=self.upstream_url.hostname)
+
+                    self.client = ssl.wrap_socket(self.client,
+                                                  server_side=True,
+                                                  certfile=cert_path,
+                                                  keyfile=PRIVATE_KEY_PATH,
+                                                  ssl_version=ssl.PROTOCOL_TLS)
+
+                    client_data = recv_and_parse(self.client, self.request_parser, buff_size=DEFAULT_BUFF_SIZE)
+                    ca_file = CERTS_MAIN_DIRNAME + '/' + ROOT_CRTNAME
+
+                    # ctx = ssl.create_default_context(
+                    #     ssl.Purpose.SERVER_AUTH, cafile=ca_file)
+                    # ctx.options |= ssl.OP_NO_SSLv2 | ssl.OP_NO_SSLv3 | ssl.OP_NO_TLSv1
+                    # ctx.check_hostname = True
+                    # self.server.setblocking(True)
+                    # self.server = ctx.wrap_socket(
+                    #     self.server,
+                    #     server_hostname=self.upstream_url.hostname)
+                    # self.server.setblocking(False)
+
+                    # require a certificate from the server
+                    # self.server = ssl.wrap_socket(self.server,
+                    #                            ca_certs=CERTS_MAIN_DIRNAME + '/' + ROOT_CRTNAME,
+                    #                            cert_reqs=ssl.CERT_REQUIRED)
+                    self.server = ssl.wrap_socket(self.server)
+
+                    pprint.pprint(self.server.getpeercert())
+
+                    proxy_req = build_http_request(
+                        method=bytes(self.request_parser.get_method().encode()),
+                        url=bytes(self.upstream_path.encode()),
+                        proto_version=self.request_parser.get_version(),
+                        headers=self.request_parser.get_headers(),
+
+                        body=bytes(self.request_parser.recv_body())
+                    )
+                    self.server.sendall(proxy_req)
+
+                    # response_data = recv_and_parse(self.server, self.response_parser, buff_size=DEFAULT_BUFF_SIZE)
+                    response_data = bytes()
+                    data = bytes()
+                    while True:
+                        data = self.server.recv(DEFAULT_BUFF_SIZE)
+                        if not data:
+                            break
+                        response_data += data
+                    self.total_response_size = len(response_data)
+                    if len(response_data) == 0:
+                        print('Server closed connection')
+                        self.server.close()
+
+                    self.client.sendall(response_data)
+
+                except Exception as e:
+                    print(e.args)
+
             elif self.server:
                 via_header = (b'Via', b'%s' % PROXY_AGENT_HEADER_VALUE)
 
@@ -75,6 +154,11 @@ class HttpProtocolHandler:
 
     def connect_upstream(self) -> None:
         url = self.request_parser.get_url()
+        if '443' in url:
+            # костыль
+            url = 'http://' + url.split(':')[0] + '/'
+            DEFAULT_HTTP_PORT = 443
+
         self.upstream_url = urlparse.urlsplit(url)
         self.upstream_path = self.build_upstream_relative_path()
         host, port = self.upstream_url.hostname, self.upstream_url.port \

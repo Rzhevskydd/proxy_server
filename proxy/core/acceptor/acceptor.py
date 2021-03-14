@@ -32,10 +32,10 @@ class Acceptor(multiprocessing.Process):
             client_addr=client_addr,
             flags=self.flags,
         )
-        work_thread = threading.Thread(target=handler.run)
-        work_thread.daemon = True
-        work_thread.start()
-        # handler.run()
+        # work_thread = threading.Thread(target=handler.run)
+        # work_thread.daemon = True
+        # work_thread.start()
+        handler.run()
 
     def accept_and_handle(self) -> None:
         with self.lock:

@@ -31,11 +31,11 @@ arg_parser.add_argument(
 arg_parser.add_argument(
     '--keyfile',
     type=str,
-    default=DEFAULT_BACKLOG,
+    default=None,
 )
 
 arg_parser.add_argument(
     '--certfile',
     type=str,
-    default=DEFAULT_BACKLOG,
+    default=None,
 )

@@ -1,25 +1,25 @@
 from typing import NamedTuple
 
 HttpMethods = NamedTuple('HttpMethods', [
-    ('GET', bytes),
-    ('HEAD', bytes),
-    ('POST', bytes),
-    ('PUT', bytes),
-    ('DELETE', bytes),
-    ('CONNECT', bytes),
-    ('OPTIONS', bytes),
-    ('TRACE', bytes),
-    ('PATCH', bytes),
+    ('GET', str),
+    ('HEAD', str),
+    ('POST', str),
+    ('PUT', str),
+    ('DELETE', str),
+    ('CONNECT', str),
+    ('OPTIONS', str),
+    ('TRACE', str),
+    ('PATCH', str),
 ])
 
 httpMethods = HttpMethods(
-    b'GET',
-    b'HEAD',
-    b'POST',
-    b'PUT',
-    b'DELETE',
-    b'CONNECT',
-    b'OPTIONS',
-    b'TRACE',
-    b'PATCH',
+    f'GET',
+    f'HEAD',
+    f'POST',
+    f'PUT',
+    f'DELETE',
+    f'CONNECT',
+    f'OPTIONS',
+    f'TRACE',
+    f'PATCH',
 )
