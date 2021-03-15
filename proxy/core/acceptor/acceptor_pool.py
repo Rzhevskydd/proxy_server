@@ -55,9 +55,9 @@ class AcceptorPool:
         self.start_workers()
 
         assert self.socket is not None
-        if self.flags.num_workers == 1:
-            self.socket.close()
-            return
+        # if self.flags.num_workers == 1:
+        #     self.socket.close()
+        #     return
         for idx in range(self.flags.num_workers):
             send_handle(
                 self.work_queues[idx],

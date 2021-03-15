@@ -51,3 +51,20 @@ class Acceptor(multiprocessing.Process):
         while not self.running.is_set():
             self.accept_and_handle()
 
+
+# while True:
+#     try:
+#         data = self.server.recv(DEFAULT_BUFF_SIZE)
+#     except Exception as e:
+#         count += 1
+#         print('TIMEOUT  - ', e.args)
+#         slice = data[-4:]
+#         if slice == b'\r\n\r\n':
+#             break
+#         if count > 5:
+#             print('VERY BAD - ', e.args)
+#             self.shutdown()
+#             self.client.close()
+#             return
+#     if not data:
+#         break

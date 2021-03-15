@@ -3,19 +3,22 @@ import pprint
 import socket
 import ssl
 import time
+from http.client import HTTPResponse
 from os import getpid
+from string import Template
+from subprocess import Popen, PIPE
 from typing import Optional, Union
 from urllib import parse as urlparse
 
-from http_parser.parser import HttpParser
+from http_parser.pyparser import HttpParser
 
 from proxy.cert_utils import generate_cert
 from proxy.common.constant import DEFAULT_HTTP_PORT, DEFAULT_TIMEOUT, PROXY_AGENT_HEADER_VALUE, PRIVATE_KEY_PATH, \
-    ROOT_CRTNAME, CERTS_MAIN_DIRNAME
+    ROOT_CRTNAME, CERTS_DIR, SSL_HANDSHAKES_LIMIT_NUMBER, GENERATED_CERTS_DIR, CERT_KEY, CA_CERT, CA_KEY
 from proxy.http.http_methods import httpMethods
-from proxy.http.utils import build_http_request, recv_and_parse, build_http_response
+from proxy.http.utils import build_http_request, recv, build_http_response, HTTPResource
 
-DEFAULT_BUFF_SIZE = 4096
+DEFAULT_BUFF_SIZE = 1024 * 1024 * 15
 
 
 class HttpProtocolHandler:
@@ -39,87 +42,135 @@ class HttpProtocolHandler:
         self.response_parser = HttpParser(1)  # 1 - parse only responses
         self.total_response_size: int = 0
 
-        self.upstream_url: Optional[urlparse.SplitResultBytes] = None
-        self.upstream_path = None
+        self.upstream: Optional[urlparse.SplitResultBytes] = None
+        self.host = None
+        self.port = None
+        self.upstream_url = None
 
         self.server: Optional[socket.socket] = None
 
-    def run(self) -> None:
-        try:
-            # self.initialize()
+    def parse_url(self, parser):
+        url = parser.get_url()
+        method = parser.get_method()
 
-            client_data = recv_and_parse(self.client, self.request_parser, buff_size=DEFAULT_BUFF_SIZE)
+        protocol_pos = url.find('://')
+        if protocol_pos != -1:
+            url = url[(protocol_pos + 3):]
+
+        port_pos = url.find(':')
+        host_pos = url.find('/')
+        if host_pos == -1:
+            host_pos = len(url)
+        if port_pos == -1 or host_pos < port_pos:
+            port = 443 if method == "CONNECT" else DEFAULT_HTTP_PORT
+        else:
+            port = int((url[port_pos + 1:])[:host_pos - port_pos - 1])
+
+        port_ind = url.find(':')
+        if port_ind != -1:
+            url = url[:port_ind]
+
+        self.upstream = urlparse.urlsplit('http://' + url + '/')
+        self.upstream_url = self.build_upstream_relative_path()
+        host = self.upstream.hostname
+
+        port_ind = host.find(':')
+        if port_ind != -1:
+            host = host[:port_ind]
+
+        return host, port
+
+    def run(self) -> None:
+        parser = HttpParser()
+        try:
+            client_data = recv(self.client)
+            print('CONNECT:', str(client_data))
             if len(client_data) == 0:
                 print('Client closed connection')
                 self.client.close()
+                return
 
-            self.connect_upstream()
+            parser.execute(client_data, len(client_data))
 
-            if self.request_parser.get_method() == httpMethods.CONNECT:
-                print(str(HttpProtocolHandler.PROXY_TUNNEL_ESTABLISHED_RESPONSE_PKT))
-                self.client.sendall(HttpProtocolHandler.PROXY_TUNNEL_ESTABLISHED_RESPONSE_PKT)
+            host, port = self.parse_url(parser)
 
+            if parser.get_method() == httpMethods.CONNECT:
                 # Generate for each socket individual cert on fly
-                cert_path = generate_cert(self.upstream_url.hostname)
-                # TODO
-                time.sleep(1)
+                # cert_path = generate_cert(self.host)
+
+                epoch = "%d" % (time.time() * 1000)
+                cert_path = "%s/%s.crt" % (CERTS_DIR.rstrip('/') + '/' + GENERATED_CERTS_DIR, host)
+                # CGenerating config to add subjectAltName (required in modern browsers)
+                conf_template = Template("subjectAltName=DNS:${hostname}")
+                conf_path = "%s/%s.cnf" % (CERTS_DIR.rstrip('/') + '/' + GENERATED_CERTS_DIR, host)
+                with open(conf_path, 'w') as fp:
+                    fp.write(conf_template.substitute(hostname=host))
+
+                # Generating certificate
+                p1 = Popen(["openssl", "req", "-new", "-key", CERTS_DIR + CERT_KEY,
+                            "-subj", "/CN=%s" % host, "-addext",
+                            "subjectAltName = DNS:" + host], stdout=PIPE)
+                p2 = Popen(
+                    ["openssl", "x509", "-req", "-extfile", conf_path, "-days", "3650",
+                     "-CA", CERTS_DIR + CA_CERT,
+                     "-CAkey", CERTS_DIR + CA_KEY,
+                     "-set_serial", epoch,
+                     "-out", cert_path], stdin=p1.stdout, stderr=PIPE)
+                p2.communicate()
+                os.unlink(conf_path)
+
+                tunn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                tunn.connect((host, port))
+
+                connect_resp = HttpProtocolHandler.PROXY_TUNNEL_ESTABLISHED_RESPONSE_PKT
+                self.client.sendall(connect_resp)
 
                 try:
-                    # ctx = ssl.create_default_context()
-                    # ctx.options |= ssl.OP_NO_SSLv2 | ssl.OP_NO_SSLv3 | ssl.OP_NO_TLSv1
-                    # ctx.load_cert_chain(certfile=cert_path, keyfile=PRIVATE_KEY_PATH)
-                    # self.server = ctx.wrap_socket(self.server, server_hostname=self.upstream_url.hostname)
-
-                    self.client = ssl.wrap_socket(self.client,
-                                                  server_side=True,
-                                                  certfile=cert_path,
-                                                  keyfile=PRIVATE_KEY_PATH,
-                                                  ssl_version=ssl.PROTOCOL_TLS)
-
-                    client_data = recv_and_parse(self.client, self.request_parser, buff_size=DEFAULT_BUFF_SIZE)
-                    ca_file = CERTS_MAIN_DIRNAME + '/' + ROOT_CRTNAME
-
-                    # ctx = ssl.create_default_context(
-                    #     ssl.Purpose.SERVER_AUTH, cafile=ca_file)
-                    # ctx.options |= ssl.OP_NO_SSLv2 | ssl.OP_NO_SSLv3 | ssl.OP_NO_TLSv1
-                    # ctx.check_hostname = True
-                    # self.server.setblocking(True)
-                    # self.server = ctx.wrap_socket(
-                    #     self.server,
-                    #     server_hostname=self.upstream_url.hostname)
-                    # self.server.setblocking(False)
-
-                    # require a certificate from the server
-                    # self.server = ssl.wrap_socket(self.server,
-                    #                            ca_certs=CERTS_MAIN_DIRNAME + '/' + ROOT_CRTNAME,
-                    #                            cert_reqs=ssl.CERT_REQUIRED)
-                    self.server = ssl.wrap_socket(self.server)
-
-                    pprint.pprint(self.server.getpeercert())
-
-                    proxy_req = build_http_request(
-                        method=bytes(self.request_parser.get_method().encode()),
-                        url=bytes(self.upstream_path.encode()),
-                        proto_version=self.request_parser.get_version(),
-                        headers=self.request_parser.get_headers(),
-
-                        body=bytes(self.request_parser.recv_body())
-                    )
-                    self.server.sendall(proxy_req)
-
-                    # response_data = recv_and_parse(self.server, self.response_parser, buff_size=DEFAULT_BUFF_SIZE)
-                    response_data = bytes()
-                    data = bytes()
+                    count = 0
                     while True:
-                        data = self.server.recv(DEFAULT_BUFF_SIZE)
-                        if not data:
+                        try:
+                            count += 1
+                            self.client = ssl.wrap_socket(self.client,
+                                                          server_side=True,
+                                                          certfile=cert_path,
+                                                          keyfile=CERTS_DIR + CERT_KEY)
+                            # self.client.do_handshake()
                             break
-                        response_data += data
+                        except Exception as e:
+                            if count > SSL_HANDSHAKES_LIMIT_NUMBER:
+                                print('SHUTDOWN - ', e.args)
+                                self.shutdown()
+                                self.client.close()
+                                return
+                            print(count)
+                            time.sleep(0.01)  # 100 ms
+
+                    # request = recv(self.client)
+                    request = self.client.recv(40960)
+
+                    # proxy_req = build_http_request(
+                    #     method=bytes(parser.get_method().encode()),
+                    #     url=bytes(self.upstream_path.encode()),
+                    #     proto_version=parser.get_version(),
+                    #     headers=parser.get_headers(),
+                    #
+                    #     body=bytes(self.request_parser.recv_body())
+                    # )
+                    print('REQUEST TO SERVER:', str(request))
+                    self.server = ssl.wrap_socket(tunn)
+                    self.server.send(request)
+
+                    http = HTTPResource('as', 'as')
+                    header, body = http.recv(self.server)
+                    response_data = header + body
+
                     self.total_response_size = len(response_data)
                     if len(response_data) == 0:
                         print('Server closed connection')
                         self.server.close()
+                        return
 
+                    # print('RESPONSE DATA: ', str(response_data))
                     self.client.sendall(response_data)
 
                 except Exception as e:
@@ -129,19 +180,23 @@ class HttpProtocolHandler:
                 via_header = (b'Via', b'%s' % PROXY_AGENT_HEADER_VALUE)
 
                 proxy_req = build_http_request(
-                    method=bytes(self.request_parser.get_method().encode()),
-                    url=bytes(self.upstream_path.encode()),
-                    proto_version=self.request_parser.get_version(),
-                    headers=self.request_parser.get_headers(),
-                    body=bytes(self.request_parser.recv_body())
+                    method=bytes(parser.get_method().encode()),
+                    url=bytes(self.upstream_url.encode()),
+                    proto_version=parser.get_version(),
+                    headers=parser.get_headers(),
+                    body=bytes(parser.recv_body())
                 )
+
+                self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                self.server.connect((host, port))
                 self.server.sendall(proxy_req)
 
-                response_data = recv_and_parse(self.server, self.response_parser, buff_size=DEFAULT_BUFF_SIZE)
+                response_data = recv(self.server)
                 self.total_response_size = len(response_data)
                 if len(response_data) == 0:
                     print('Server closed connection')
                     self.server.close()
+                    return
 
                 self.client.sendall(response_data)
 
@@ -152,30 +207,21 @@ class HttpProtocolHandler:
         finally:
             self.shutdown()
 
-    def connect_upstream(self) -> None:
-        url = self.request_parser.get_url()
-        if '443' in url:
-            # костыль
-            url = 'http://' + url.split(':')[0] + '/'
-            DEFAULT_HTTP_PORT = 443
-
-        self.upstream_url = urlparse.urlsplit(url)
-        self.upstream_path = self.build_upstream_relative_path()
-        host, port = self.upstream_url.hostname, self.upstream_url.port \
-            if self.upstream_url.port else DEFAULT_HTTP_PORT
-
+    def connect_upstream(self, parser) -> None:
         self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server.connect((host, int(port)))
-        # self.server_conn.settimeout(DEFAULT_TIMEOUT)
+        # self.server.settimeout(DEFAULT_TIMEOUT)
+
+        self.host, self.port = host, port
 
     def build_upstream_relative_path(self) -> Union[str, bytes]:
-        if not self.upstream_url:
-            return b'/None'
-        url = self.upstream_url.path
-        if not self.upstream_url.query == '':
-            url += b'?' + self.upstream_url.query
-        if not self.upstream_url.fragment == '':
-            url += b'#' + self.upstream_url.fragment
+        if not self.upstream:
+            return f'/None'
+        url = self.upstream.path
+        if not self.upstream.query == '':
+            url += f'?' + str(self.upstream.query)
+        if not self.upstream.fragment == '':
+            url += f'#' + str(self.upstream)
         return url
 
     def shutdown(self):
@@ -188,12 +234,12 @@ class HttpProtocolHandler:
         except OSError:
             pass
         finally:
-            self.access_log()
+            # self.access_log()
             self.server.close()
 
     def access_log(self):
-        server_host, server_port = self.upstream_url.hostname, self.upstream_url.port \
-            if self.upstream_url.port else DEFAULT_HTTP_PORT
+        server_host, server_port = self.upstream.hostname, self.upstream.port \
+            if self.upstream.port else DEFAULT_HTTP_PORT
 
         connection_time_ms = (time.time() - self.start_time) * 1000
         method = self.request_parser.get_method()

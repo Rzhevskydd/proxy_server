@@ -1,4 +1,5 @@
-cd self_signed_certs;
-openssl req -x509 -nodes -new -sha256 -days 1024 -newkey rsa:2048 -keyout RootCA.key -out RootCA.pem -subj "/C=US/CN=Example-Root-CA";
-openssl x509 -outform pem -in RootCA.pem -out RootCA.crt;
-openssl req -new -nodes -newkey rsa:2048 -keyout localhost.key -out localhost.csr -subj "/C=US/ST=YourState/L=YourCity/O=Example-Certificates/CN=localhost.local";
+cd certs;
+openssl genrsa -out ca.key 2048
+openssl req -new -x509 -days 3650 -key ca.key -out ca.crt -subj "/CN=proxy2 CA"
+openssl genrsa -out cert.key 2048
+mkdir generated_certs/
