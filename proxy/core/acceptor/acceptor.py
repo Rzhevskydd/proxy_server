@@ -1,6 +1,7 @@
 import multiprocessing
 import socket
 import threading
+from _thread import start_new_thread
 from multiprocessing import connection
 from multiprocessing.synchronize import Lock
 
@@ -27,15 +28,27 @@ class Acceptor(multiprocessing.Process):
         self.socket: Optional[socket.socket] = None
 
     def start_work(self, client_conn, client_addr):
+        data = client_conn.recv(8192)
+        req = b''
+        client_conn.settimeout(0.1)
+        while data:
+            req += data
+            try:
+                data = client_conn.recv(8192)
+            except socket.error:
+                break
+
         handler = self.handler_klass(
             client_conn=client_conn,
             client_addr=client_addr,
             flags=self.flags,
+            req=req
         )
         # work_thread = threading.Thread(target=handler.run)
         # work_thread.daemon = True
         # work_thread.start()
-        handler.run()
+        # handler.run()
+        start_new_thread(handler.run, ())
 
     def accept_and_handle(self) -> None:
         with self.lock:
