@@ -148,5 +148,9 @@ Thumbs.db #thumbnail cache on Windows
 # profiling data
 .prof
 
+certs/ca.crt
+certs/ca.key
+certs/cert.key
+
 
 # End of https://www.toptal.com/developers/gitignore/api/python
