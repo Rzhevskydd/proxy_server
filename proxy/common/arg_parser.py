@@ -13,7 +13,7 @@ arg_parser.add_argument(
 arg_parser.add_argument(
     '--port',
     type=int,
-    default=8080
+    default=7888
 )
 
 arg_parser.add_argument(

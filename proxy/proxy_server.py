@@ -28,6 +28,3 @@ def entry_point() -> None:
 
     proxy = ProxyServer(flags)
     proxy.start()
-
-entry_point()
-
