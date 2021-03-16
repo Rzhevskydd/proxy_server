@@ -142,16 +142,14 @@ class HttpProtocolHandler:
             )
 
 
-cert_key = '/home/danil_rzhevsky/TECHOPARK/web_app_security/proxy_server/certs/cert.key'
-ca_key = '/home/danil_rzhevsky/TECHOPARK/web_app_security/proxy_server/certs/ca.key'
-ca_cert = '/home/danil_rzhevsky/TECHOPARK/web_app_security/proxy_server/certs/ca.crt'
-cert_dir = '/home/danil_rzhevsky/TECHOPARK/web_app_security/proxy_server/certs/generated_certs/'
+cert_key = 'certs/cert.key'
+ca_key = 'certs/ca.key'
+ca_cert = 'certs/ca.crt'
+cert_dir = 'certs/generated_certs/'
 buffer_size = 8192
 
 
 def https_proxy(host, port, conn):
-    print('CONN')
-
     epoch = "%d" % (time.time() * 1000)
     cert_path = "%s/%s.crt" % (cert_dir.rstrip('/'), host)
     # CGenerating config to add subjectAltName (required in modern browsers)

@@ -14,8 +14,8 @@ DOT = b'.'
 SLASH = b'/'
 HTTP_1_1 = b'HTTP/1.1'
 
-PRIVATE_KEY_PATH = '/home/danil_rzhevsky/TECHOPARK/web_app_security/proxy_server/certs/localhost.key'
-CERTS_DIR = '/home/danil_rzhevsky/TECHOPARK/web_app_security/proxy_server/certs/'
+PRIVATE_KEY_PATH = 'certs/localhost.key'
+CERTS_DIR = 'certs/'
 EXT_FILENAME = "domains.ext"
 CRT_FILENAME = "localhost.crt"
 CSR_FILENAME = "localhost.csr"
